@@ -826,11 +826,11 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             return string.Join(",", result.Select(kvp => kvp.Value));
         }
 
-        public static async Task<bool> EntityProxy([OrchestrationTrigger] IDurableOrchestrationContext ctx)
+        public static async Task<bool> EntityProxyWithBindings([OrchestrationTrigger] IDurableOrchestrationContext ctx)
         {
             var counter = ctx.GetInput<EntityId>();
 
-            var entityProxy = ctx.CreateEntityProxy<TestEntityClasses.ICounter>(counter);
+            var entityProxy = ctx.CreateEntityProxy<TestEntityClasses.IAsyncCounter>(counter);
 
             // reset
             await entityProxy.Set(10);
@@ -850,6 +850,30 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             return result == 16;
         }
 
+        public static async Task<bool> EntityProxy([OrchestrationTrigger] IDurableOrchestrationContext ctx)
+        {
+            var counter = ctx.GetInput<EntityId>();
+
+            var entityProxy = ctx.CreateEntityProxy<TestEntityClasses.ICounter>(counter);
+
+            // reset
+            entityProxy.Set(10);
+
+            // increment
+            entityProxy.Increment();
+
+            // add
+            entityProxy.Add(5);
+
+            // get current value
+            var result = await entityProxy.Get();
+
+            // destruct
+            entityProxy.Delete();
+
+            return result == 16;
+        }
+
         public static async Task<bool> EntityProxy_NameResolve([OrchestrationTrigger] IDurableOrchestrationContext ctx)
         {
             var entityKey = ctx.GetInput<string>();
@@ -857,13 +881,13 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             var entityProxy = ctx.CreateEntityProxy<TestEntityClasses.ICounter>(entityKey);
 
             // reset
-            await entityProxy.Set(10);
+            entityProxy.Set(10);
 
             // increment
-            await entityProxy.Increment();
+            entityProxy.Increment();
 
             // add
-            await entityProxy.Add(5);
+            entityProxy.Add(5);
 
             // get current value
             var result = await entityProxy.Get();

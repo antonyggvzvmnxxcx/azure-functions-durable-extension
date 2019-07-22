@@ -213,11 +213,6 @@
             Configuration for the Durable Functions extension.
             </summary>
         </member>
-        <member name="M:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskExtension.#ctor">
-            <summary>
-            Obsolete. Please use an alternate constructor overload.
-            </summary>
-        </member>
         <member name="M:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskExtension.#ctor(Microsoft.Extensions.Options.IOptions{Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskOptions},Microsoft.Extensions.Logging.ILoggerFactory,Microsoft.Azure.WebJobs.INameResolver,Microsoft.Azure.WebJobs.Extensions.DurableTask.IOrchestrationServiceFactory)">
             <summary>
             Initializes a new instance of the <see cref="T:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskExtension"/>.
@@ -226,17 +221,6 @@
             <param name="loggerFactory">The logger factory used for extension-specific logging and orchestration tracking.</param>
             <param name="nameResolver">The name resolver to use for looking up application settings.</param>
             <param name="orchestrationServiceFactory">The factory used to create orchestration service based on the configured storage provider.</param>
-        </member>
-        <member name="P:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskExtension.HubName">
-            <summary>
-            Gets or sets default task hub name to be used by all <see cref="T:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableOrchestrationClient"/>,
-            <see cref="T:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableOrchestrationContext"/>, and <see cref="T:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableActivityContext"/> instances.
-            </summary>
-            <remarks>
-            A task hub is a logical grouping of storage resources. Alternate task hub names can be used to isolate
-            multiple Durable Functions applications from each other, even if they are using the same storage backend.
-            </remarks>
-            <value>The name of the default task hub.</value>
         </member>
         <member name="M:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskExtension.Microsoft#Azure#WebJobs#Host#Config#IExtensionConfigProvider#Initialize(Microsoft.Azure.WebJobs.Host.Config.ExtensionConfigContext)">
             <summary>
@@ -277,6 +261,17 @@
             <param name="name">The name of the activity to return.</param>
             <param name="version">Not used.</param>
             <returns>An activity shim that delegates execution to an activity function.</returns>
+        </member>
+        <member name="M:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskExtension.GetClient(Microsoft.Azure.WebJobs.OrchestrationClientAttribute)">
+            <summary>
+            Gets a <see cref="T:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableOrchestrationClient"/> using configuration from a <see cref="T:Microsoft.Azure.WebJobs.OrchestrationClientAttribute"/> instance.
+            </summary>
+            <param name="attribute">The attribute containing the client configuration parameters.</param>
+            <returns>Returns a <see cref="T:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableOrchestrationClient"/> instance. The returned instance may be a cached instance.</returns>
+        </member>
+        <member name="M:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskExtension.Microsoft#Azure#WebJobs#IAsyncConverter{System#Net#Http#HttpRequestMessage,System#Net#Http#HttpResponseMessage}#ConvertAsync(System.Net.Http.HttpRequestMessage,System.Threading.CancellationToken)">
+            <inheritdoc/>
+    an activity function.</returns>
         </member>
         <member name="M:Microsoft.Azure.WebJobs.Extensions.DurableTask.DurableTaskExtension.GetClient(Microsoft.Azure.WebJobs.OrchestrationClientAttribute)">
             <summary>
@@ -2758,6 +2753,94 @@
             </value>
         </member>
         <member name="T:Microsoft.Azure.WebJobs.StartOrchestrationArgs">
+            <summary>
+            Parameters for starting a new instance of an orchestration.
+            </summary>
+            <remarks>
+            This class is primarily intended for use with <c>IAsyncCollector&lt;T&gt;</c>.
+            </remarks>
+        </member>
+        <member name="M:Microsoft.Azure.WebJobs.StartOrchestrationArgs.#ctor(System.String,System.Object)">
+            <summary>
+            Initializes a new instance of the <see cref="T:Microsoft.Azure.WebJobs.StartOrchestrationArgs"/> class.
+            </summary>
+            <param name="functionName">The name of the orchestrator function to start.</param>
+            <param name="input">The JSON-serializeable input for the orchestrator function.</param>
+        </member>
+        <member name="M:Microsoft.Azure.WebJobs.StartOrchestrationArgs.#ctor">
+            <summary>
+            Initializes a new instance of the <see cref="T:Microsoft.Azure.WebJobs.StartOrchestrationArgs"/> class.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Azure.WebJobs.StartOrchestrationArgs.FunctionName">
+            <summary>
+            Gets or sets the name of the orchestrator function to start.
+            </summary>
+            <value>The name of the orchestrator function to start.</value>
+        </member>
+        <member name="P:Microsoft.Azure.WebJobs.StartOrchestrationArgs.InstanceId">
+            <summary>
+            Gets or sets the instance ID to assign to the started orchestration.
+            </summary>
+            <remarks>
+            If this property value is null (the default), then a randomly generated instance ID will be assigned automatically.
+            </remarks>
+            <value>The instance ID to assign.</value>
+        </member>
+        <member name="P:Microsoft.Azure.WebJobs.StartOrchestrationArgs.Input">
+            <summary>
+            Gets or sets the JSON-serializeable input data for the orchestrator function.
+            </summary>
+            <value>JSON-serializeable input value for the orchestrator function.</value>
+        </member>
+        <member name="T:Microsoft.Azure.WebJobs.ActivityTriggerAttribute">
+            <summary>
+            Trigger attribute used for durable activity functions.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Azure.WebJobs.ActivityTriggerAttribute.Activity">
+            <summary>
+            Gets or sets the name of the activity function.
+            </summary>
+            <value>
+            The name of the activity function or <c>null</c> to use the function name.
+            </value>
+        </member>
+        <member name="T:Microsoft.Azure.WebJobs.EntityTriggerAttribute">
+            <summary>
+            Trigger attribute used for durable entity functions.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Azure.WebJobs.EntityTriggerAttribute.EntityName">
+            <summary>
+            Gets or sets the name of the entity.
+            </summary>
+            <remarks>
+            If not specified, the function name is used as the name of the entity.
+            </remarks>
+            <value>
+            The name of the entity or <c>null</c> to use the function name.
+            </value>
+        </member>
+        <member name="T:Microsoft.Azure.WebJobs.OrchestrationTriggerAttribute">
+            <summary>
+            Trigger attribute used for durable orchestrator functions.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Azure.WebJobs.OrchestrationTriggerAttribute.Orchestration">
+            <summary>
+            Gets or sets the name of the orchestrator function.
+            </summary>
+            <remarks>
+            If not specified, the function name is used as the name of the orchestration.
+            </remarks>
+            <value>
+            The name of the orchestrator function or <c>null</c> to use the function name.
+            </value>
+        </member>
+    </members>
+</doc>
+.Azure.WebJobs.StartOrchestrationArgs">
             <summary>
             Parameters for starting a new instance of an orchestration.
             </summary>

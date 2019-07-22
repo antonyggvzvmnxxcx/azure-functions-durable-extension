@@ -26,6 +26,19 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
 
         public interface ICounter
         {
+            void Increment();
+
+            void Add(int value);
+
+            Task<int> Get();
+
+            void Set(int newValue);
+
+            void Delete();
+        }
+
+        public interface IAsyncCounter
+        {
             Task Increment();
 
             Task Add(int value);
@@ -91,16 +104,14 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             [JsonProperty("value")]
             public int Value { get; set; }
 
-            public Task Increment()
+            public void Increment()
             {
                 this.Value += 1;
-                return Task.CompletedTask;
             }
 
-            public Task Add(int value)
+            public void Add(int value)
             {
                 this.Value += value;
-                return Task.CompletedTask;
             }
 
             public Task<int> Get()
@@ -108,10 +119,9 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
                 return Task.FromResult(this.Value);
             }
 
-            public Task Set(int newValue)
+            public void Set(int newValue)
             {
                 this.Value = newValue;
-                return Task.CompletedTask;
             }
 
             public void Delete()
@@ -123,7 +133,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
         //-------------- An entity representing a counter object -----------------
 
         [JsonObject(MemberSerialization = MemberSerialization.OptIn)]
-        public class StorageBackedCounter : ICounter
+        public class StorageBackedCounter : IAsyncCounter
         {
             private readonly CloudBlobContainer blobContainer;
             private readonly string blobName = "counter";
