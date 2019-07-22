@@ -111,7 +111,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
                     }
                     else
                     {
-                        return JsonConvert.DeserializeObject<TState>(this.State.EntityState);
+                        result = JsonConvert.DeserializeObject<TState>(this.State.EntityState);
                     }
                 }
 
