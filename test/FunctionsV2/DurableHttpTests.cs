@@ -77,6 +77,54 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
         [Theory]
         [Trait("Category", PlatformSpecificHelpers.TestCategory)]
         [MemberData(nameof(TestDataGenerator.GetFullFeaturedStorageProviderOptions), MemberType = typeof(TestDataGenerator))]
+        public async Task DurableHttpAsync_TestConnectorProvisioning_HasParameters(string storageProvider)
+        {
+            using (JobHost host = TestHelpers.GetJobHost(
+                this.loggerProvider,
+                nameof(this.DurableHttpAsync_SynchronousAPI_Returns200),
+                enableExtendedSessions: false,
+                storageProviderType: storageProvider,
+                durableHttpMessageHandler: new DurableHttpMessageHandlerFactory()))
+            {
+                await host.StartAsync();
+
+                Dictionary<string, string> headers = new Dictionary<string, string>();
+                headers.Add("Accept", "application/json");
+                TestDurableHttpRequest testRequest = new TestDurableHttpRequest(
+                    httpMethod: HttpMethod.Get,
+                    headers: headers,
+                    content: "any",
+                    uri: "https://management.azure.com/subscriptions/5f8817ed-febf-4e80-8f6a-766e0842a549/resourceGroups/DurableFunctionsConnectorsDemoRG/providers/Microsoft.Web/connections/azureblob/extensions/proxy/datasets/default/files?api-version=2016-06-01&folderPath=%22/%22&name=%22Test.txt%22&queryParametersSingleEncoded=true",
+                    tokenSource: new ManagedIdentityTokenSource("https://management.azure.com"));
+
+                string functionName = nameof(TestOrchestrations.CallHttpAsyncOrchestrator);
+                var client = await host.StartOrchestratorAsync(functionName, testRequest, this.output);
+
+                await Task.Delay(TimeSpan.FromSeconds(30));
+
+                var parameters = new List<KeyValuePair<string, string>>();
+                parameters.Add(new KeyValuePair<string, string>("accountName", "aadv2easyauthfub03e"));
+                parameters.Add(new KeyValuePair<string, string>("accessKey", "AT0WMXJ4rz0bK058ZCCtHMk/vlRwr1G51VVWienkCQDYa7kfh1TOaUiuI46ZlQIXA8DkupWz/N3AskMZUezQBw=="));
+                var orchestrationStatus = await client.GetStatusAsync();
+                await client.RaiseEventAsync("SendParameters", parameters, this.output);
+                var status = await client.WaitForCompletionAsync(this.output, timeout: TimeSpan.FromSeconds(400));
+
+                var output = status?.Output;
+                JsonSerializer serializer = new JsonSerializer();
+                serializer.Converters.Add(new DurableHttpResponseJsonConverter(typeof(DurableHttpResponse)));
+                DurableHttpResponse response = output.ToObject<DurableHttpResponse>(serializer);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+                await host.StopAsync();
+            }
+        }
+
+        /// <summary>
+        /// End-to-end test which checks if the CallHttpAsync Orchestrator returns an OK (200) status code.
+        /// </summary>
+        [Theory]
+        [Trait("Category", PlatformSpecificHelpers.TestCategory)]
+        [MemberData(nameof(TestDataGenerator.GetFullFeaturedStorageProviderOptions), MemberType = typeof(TestDataGenerator))]
         public async Task DurableHttpAsync_SynchronousAPI_Returns200(string storageProvider)
         {
             HttpResponseMessage testHttpResponseMessage = CreateTestHttpResponseMessage(HttpStatusCode.OK);

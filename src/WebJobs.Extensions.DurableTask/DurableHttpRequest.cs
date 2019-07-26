@@ -3,10 +3,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.Serialization;
 using Microsoft.Extensions.Primitives;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
 {
@@ -25,6 +27,33 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
             this.Method = method;
             this.Uri = uri;
             this.Headers = new Dictionary<string, StringValues>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        internal DurableHttpRequest(JObject jObject)
+        {
+            this.Method = jObject["Method"].ToObject<HttpMethod>();
+            this.Uri = jObject["Uri"].ToObject<Uri>();
+
+            Dictionary<string, StringValues> headerDictStringValues = new Dictionary<string, StringValues>();
+            Dictionary<string, IEnumerable<string>> headersDictEnumerable = jObject["Headers"].ToObject<Dictionary<string, IEnumerable<string>>>();
+            foreach (var header in headersDictEnumerable)
+            {
+                string key = header.Key;
+                string[] headerValues = header.Value.ToArray<string>();
+                StringValues values = new StringValues(headerValues);
+                headerDictStringValues.Add(key, values);
+            }
+
+            this.Headers = headerDictStringValues;
+
+            this.Content = jObject["Content"].Value<string>();
+
+            JsonSerializerSettings serializer = new JsonSerializerSettings();
+            serializer.TypeNameHandling = TypeNameHandling.Auto;
+            string tokenSource = JsonConvert.SerializeObject(jObject["TokenSource"], serializer);
+
+            this.TokenSource = JsonConvert.DeserializeObject<ITokenSource>(tokenSource, serializer);
+            this.AsynchronousPatternEnabled = jObject["AsynchronousPatternEnabled"].Value<bool>();
         }
 
         /// <summary>

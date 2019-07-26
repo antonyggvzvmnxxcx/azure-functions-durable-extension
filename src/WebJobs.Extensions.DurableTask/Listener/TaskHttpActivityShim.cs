@@ -68,25 +68,47 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Listener
         private async Task<HttpRequestMessage> ReconstructHttpRequestMessage(string serializedRequest)
         {
             this.serializerSettings.TypeNameHandling = TypeNameHandling.Auto;
+            this.serializerSettings.TypeNameHandling = TypeNameHandling.Objects;
 
             // DeserializeObject deserializes into a List and then the first element
             // of that list is the serialized DurableHttpRequest
             IList<string> input = JsonConvert.DeserializeObject<List<string>>(serializedRequest, this.serializerSettings);
             string durableHttpRequestString = input.First();
+
+            this.serializerSettings.Converters.Add(new DurableHttpRequestJsonConverter(typeof(DurableHttpRequest)));
             DurableHttpRequest durableHttpRequest = JsonConvert.DeserializeObject<DurableHttpRequest>(durableHttpRequestString, this.serializerSettings);
 
+            string contentType = "";
             HttpRequestMessage requestMessage = new HttpRequestMessage(durableHttpRequest.Method, durableHttpRequest.Uri);
             if (durableHttpRequest.Headers != null)
             {
                 foreach (KeyValuePair<string, StringValues> entry in durableHttpRequest.Headers)
                 {
-                    requestMessage.Headers.Add(entry.Key, (IEnumerable<string>)entry.Value);
+                    if (entry.Key == "Content-Type")
+                    {
+                        foreach (string value in entry.Value)
+                        {
+                            if (value.Contains("multipart"))
+                            {
+                                throw new FunctionFailedException("Multipart content is not supported with CallHttpAsync.");
+                            }
+                            else
+                            {
+                                contentType = value;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        requestMessage.Headers.Add(entry.Key, (IEnumerable<string>)entry.Value);
+                    }
                 }
             }
 
             if (durableHttpRequest.Content != null)
             {
-                requestMessage.Content = JsonConvert.DeserializeObject<HttpContent>(durableHttpRequest.Content);
+                requestMessage.Content = new StringContent(durableHttpRequest.Content);
+                requestMessage.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
             }
 
             if (durableHttpRequest.TokenSource != null)

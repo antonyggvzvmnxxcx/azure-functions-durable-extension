@@ -10,11 +10,15 @@ using System.Net.Http;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using DurableTask.Core;
 using DurableTask.Core.Exceptions;
 using DurableTask.Core.History;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Template;
 using Microsoft.Azure.WebJobs.Extensions.DurableTask.Options;
 using Microsoft.Extensions.Primitives;
 using Newtonsoft.Json;
@@ -188,6 +192,8 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
 
         async Task<DurableHttpResponse> IDurableOrchestrationContext.CallHttpAsync(DurableHttpRequest req)
         {
+            await ConnectorHackathonHelper.ProvisionApiConnectionIfNecessary(this, req);
+
             DurableHttpResponse durableHttpResponse = await this.ScheduleDurableHttpActivityAsync(req);
 
             HttpStatusCode currStatusCode = durableHttpResponse.StatusCode;
