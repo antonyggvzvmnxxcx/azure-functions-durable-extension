@@ -4,10 +4,13 @@
 
 ### New Features
 
+- Fail fast if extendedSessionsEnabled set to 'true' for the worker type that doesn't support extended sessions (https://github.com/Azure/azure-functions-durable-extension/pull/2732).
+- Added an `IFunctionsWorkerApplicationBuilder.ConfigureDurableExtension()` extension method for cases where auto-registration does not work (no source gen running). (#2950)
+
 ### Bug Fixes
 
-- Fix support for distributed tracing v2 in dotnet-isolated and Java (https://github.com/Azure/azure-functions-durable-extension/pull/2634)
-- Update Microsoft.DurableTask.\* dependencies to v1.0.5
+- Fix custom connection name not working when using IDurableClientFactory.CreateClient() - contributed by [@hctan](https://github.com/hctan)
+- Made durable extension for isolated worker configuration idempotent, allowing multiple calls safely. (#2950)
 
 ### Breaking Changes
 
