@@ -20,6 +20,8 @@
 
 ### New Features
 
+- Update MaxQueuePollingInterval default for Flex Consumption apps #2953
+
 ### Bug Fixes
 
 ### Breaking Changes
