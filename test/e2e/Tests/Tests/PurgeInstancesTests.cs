@@ -76,7 +76,9 @@ public class PurgeInstancesTests
     {
         using HttpResponseMessage response = await HttpHelpers.InvokeHttpTrigger("HelloCities_HttpStart", "");
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        Thread.Sleep(1000);
+        string statusQueryGetUri = await DurableHelpers.ParseStatusQueryGetUriAsync(response);
+
+        await DurableHelpers.WaitForOrchestrationStateAsync(statusQueryGetUri, "Completed", 30);
 
         DateTime purgeEndTime = DateTime.UtcNow + TimeSpan.FromMinutes(1);
         using HttpResponseMessage purgeResponse = await HttpHelpers.InvokeHttpTrigger("PurgeOrchestrationHistory", $"?purgeEndTime={purgeEndTime:o}");

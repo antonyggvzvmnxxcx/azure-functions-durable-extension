@@ -9,20 +9,19 @@ using Microsoft.DurableTask.Client;
 
 namespace Microsoft.Azure.Durable.Tests.E2E;
 
-public static class OrchestrationQueryFunctions
+public static class SuspendResumeOrchestration
 {
-    [Function(nameof(GetAllInstances))]
-    public static async Task<HttpResponseData> GetAllInstances(
+    [Function("SuspendInstance")]
+    public static async Task<HttpResponseData> Suspend(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post")] HttpRequestData req,
-        [DurableClient] DurableTaskClient client)
+        [DurableClient] DurableTaskClient client,
+        string instanceId)
     {
+        string suspendReason = "Suspending the instance for test.";
         try 
         {
-            var instances = client.GetAllInstancesAsync();
-
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            await response.WriteAsJsonAsync(instances);
-            return response;
+            await client.SuspendInstanceAsync(instanceId, suspendReason);
+            return req.CreateResponse(HttpStatusCode.OK);
         }
         catch (RpcException ex) 
         {
@@ -33,23 +32,17 @@ public static class OrchestrationQueryFunctions
         }
     }
 
-    [Function(nameof(GetRunningInstances))]
-    public static async Task<HttpResponseData> GetRunningInstances(
+    [Function("ResumeInstance")]
+    public static async Task<HttpResponseData> Resume(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post")] HttpRequestData req,
-        [DurableClient] DurableTaskClient client)
+        [DurableClient] DurableTaskClient client,
+        string instanceId)
     {
+        string resumeReason = "Resuming the instance for test.";
         try 
         {
-            OrchestrationQuery filter = new OrchestrationQuery(Statuses: new List<OrchestrationRuntimeStatus> { 
-                OrchestrationRuntimeStatus.Running, 
-                OrchestrationRuntimeStatus.Pending, 
-                OrchestrationRuntimeStatus.Suspended 
-            });
-            var instances = client.GetAllInstancesAsync(filter);
-
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            await response.WriteAsJsonAsync(instances);
-            return response;
+            await client.ResumeInstanceAsync(instanceId, resumeReason);
+            return req.CreateResponse(HttpStatusCode.OK);
         }
         catch (RpcException ex) 
         {
