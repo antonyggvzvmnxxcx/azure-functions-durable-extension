@@ -36,16 +36,28 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Correlation
 
         internal IAsyncDisposable TelemetryModule { get; set; }
 
+        internal IAsyncDisposable WebJobsTelemetryModule { get; set; }
+
         /// <inheritdoc/>
         public ValueTask DisposeAsync()
         {
-            return this.TelemetryModule?.DisposeAsync() ?? default;
+            if (this.TelemetryModule != null)
+            {
+                this.TelemetryModule.DisposeAsync();
+            }
+
+            if (this.WebJobsTelemetryModule != null)
+            {
+                this.WebJobsTelemetryModule.DisposeAsync();
+            }
+
+            return default;
         }
 
         /// <inheritdoc/>
         public void Dispose()
         {
-            this.TelemetryModule?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            this.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
 
         /// <summary>
@@ -65,6 +77,10 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Correlation
                     DurableTelemetryModule module = new DurableTelemetryModule();
                     module.Initialize(configuration);
                     this.TelemetryModule = module;
+
+                    WebJobsTelemetryModule webJobsModule = new WebJobsTelemetryModule();
+                    webJobsModule.Initialize(configuration);
+                    this.WebJobsTelemetryModule = webJobsModule;
                 }
                 else
                 {
