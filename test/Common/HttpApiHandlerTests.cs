@@ -812,7 +812,8 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
         public async Task HandleGetStatusRequestAsync_Correctly_Parses_InstanceId_With_Spaces()
         {
             var instanceId = "test instance id with spaces";
-            var list = (IList<DurableOrchestrationStatus>)new List<DurableOrchestrationStatus>
+            var list = new List<DurableOrchestrationStatus>
+
             {
                 new DurableOrchestrationStatus
                 {
