@@ -813,7 +813,6 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
         {
             var instanceId = "test instance id with spaces";
             var list = new List<DurableOrchestrationStatus>
-
             {
                 new DurableOrchestrationStatus
                 {
