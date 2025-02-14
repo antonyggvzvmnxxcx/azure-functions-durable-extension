@@ -811,17 +811,17 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
         [Trait("Category", PlatformSpecificHelpers.TestCategory)]
         public async Task HandleGetStatusRequestAsync_Correctly_Parses_InstanceId_With_Spaces()
         {
+            var instanceId = "test instance id with spaces";
             var list = (IList<DurableOrchestrationStatus>)new List<DurableOrchestrationStatus>
             {
                 new DurableOrchestrationStatus
                 {
                     Name = "DoThis",
-                    InstanceId = "01",
+                    InstanceId = instanceId,
                     RuntimeStatus = OrchestrationRuntimeStatus.Completed,
                 },
             };
 
-            var instanceId = "test instance id with spaces";
             var clientMock = new Mock<IDurableClient>();
             clientMock
                 .Setup(x => x.GetStatusAsync(instanceId, false, false, true))
@@ -838,7 +838,9 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
                     RequestUri = getStatusRequestUriBuilder.Uri,
                 });
 
+            var actual = JsonConvert.DeserializeObject<StatusResponsePayload>(await responseMessage.Content.ReadAsStringAsync());
             Assert.Equal(HttpStatusCode.OK, responseMessage.StatusCode);
+            Assert.Equal(instanceId, actual.InstanceId);
         }
 
         [Fact]
