@@ -3,13 +3,26 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text;
 using System.Threading.Tasks;
+using Azure;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Azure.Storage.Blobs.Specialized;
 using DurableTask.AzureStorage;
+using Microsoft.ApplicationInsights.Channel;
+using Microsoft.Azure.WebJobs.Extensions.DurableTask.Storage;
+using Microsoft.Azure.WebJobs.Host.Scale;
 using Microsoft.Azure.WebJobs.Host.TestCommon;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Moq;
+using Newtonsoft.Json.Linq;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -17,9 +30,15 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
 {
     internal static class TestHelpers
     {
-        public const string LogCategory = "Host.Triggers.DurableTask";
+        // Friendly strings for provider types so easier to read in enumerated test output
+        public const string AzureStorageProviderType = "azure_storage";
+        public const string EmulatorProviderType = "emulator";
+        public const string RedisProviderType = "redis";
 
-        public static JobHost GetJobHost(
+        public const string LogCategory = "Host.Triggers.DurableTask";
+        public const string EmptyStorageProviderType = "empty";
+
+        public static ITestHost GetJobHost(
             ILoggerProvider loggerProvider,
             string testName,
             bool enableExtendedSessions,
@@ -29,57 +48,331 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             int? eventGridRetryCount = null,
             TimeSpan? eventGridRetryInterval = null,
             int[] eventGridRetryHttpStatus = null,
-            bool logReplayEvents = true,
+            bool traceReplayEvents = true,
+            bool allowVerboseLinuxTelemetry = false,
             Uri notificationUrl = null,
             HttpMessageHandler eventGridNotificationHandler = null,
             TimeSpan? maxQueuePollingInterval = null,
             string[] eventGridPublishEventTypes = null,
-            bool autoFetchLargeMessages = true)
+            string storageProviderType = AzureStorageProviderType,
+            Type durabilityProviderFactoryType = null,
+            bool autoFetchLargeMessages = true,
+            int httpAsyncSleepTime = 500,
+            IDurableHttpMessageHandlerFactory durableHttpMessageHandler = null,
+            ILifeCycleNotificationHelper lifeCycleNotificationHelper = null,
+            IMessageSerializerSettingsFactory serializerSettings = null,
+            bool? localRpcEndpointEnabled = false,
+            DurableTaskOptions options = null,
+            Action<ITelemetry> onSend = null,
+            bool rollbackEntityOperationsOnExceptions = true,
+            int entityMessageReorderWindowInMinutes = 30,
+            string exactTaskHubName = null,
+            bool addDurableClientFactory = false,
+            Action<ScaleOptions> configureScaleOptions = null,
+            Type[] types = null)
         {
-            var durableTaskOptions = new DurableTaskOptions
+            switch (storageProviderType)
             {
-                HubName = GetTaskHubNameFromTestName(testName, enableExtendedSessions),
-                TraceInputsAndOutputs = true,
-                EventGridKeySettingName = eventGridKeySettingName,
-                EventGridTopicEndpoint = eventGridTopicEndpoint,
-                ExtendedSessionsEnabled = enableExtendedSessions,
-                MaxConcurrentOrchestratorFunctions = 200,
-                MaxConcurrentActivityFunctions = 200,
-                LogReplayEvents = logReplayEvents,
-                NotificationUrl = notificationUrl,
-                NotificationHandler = eventGridNotificationHandler,
-                EventGridPublishEventTypes = eventGridPublishEventTypes,
-                FetchLargeMessagesAutomatically = autoFetchLargeMessages,
+                case AzureStorageProviderType:
+                case RedisProviderType:
+                case EmulatorProviderType:
+                    break;
+                default:
+                    throw new InvalidOperationException($"Storage provider {storageProviderType} is not supported for testing infrastructure.");
+            }
+
+            if (options == null)
+            {
+                options = new DurableTaskOptions();
+            }
+
+            // Some tests require knowing the task hub that the provider uses. Because of that, they will instantiate the exact
+            // task hub name and require the usage of that task hub. Otherwise, generate a partially random task hub from the
+            // test name and properties of the test.
+            options.HubName = exactTaskHubName ?? GetTaskHubNameFromTestName(testName, enableExtendedSessions);
+
+            options.Tracing.TraceInputsAndOutputs = true;
+            options.Tracing.TraceReplayEvents = traceReplayEvents;
+            options.Tracing.AllowVerboseLinuxTelemetry = allowVerboseLinuxTelemetry;
+
+            options.Notifications = new NotificationOptions()
+            {
+                EventGrid = new EventGridNotificationOptions()
+                {
+                    KeySettingName = eventGridKeySettingName,
+                    TopicEndpoint = eventGridTopicEndpoint,
+                    PublishEventTypes = eventGridPublishEventTypes,
+                },
             };
+            options.HttpSettings = new HttpOptions()
+            {
+                DefaultAsyncRequestSleepTimeMilliseconds = httpAsyncSleepTime,
+            };
+            options.WebhookUriProviderOverride = () => notificationUrl;
+            options.ExtendedSessionsEnabled = enableExtendedSessions;
+            options.MaxConcurrentOrchestratorFunctions = 200;
+            options.MaxConcurrentActivityFunctions = 200;
+            options.NotificationHandler = eventGridNotificationHandler;
+            options.LocalRpcEndpointEnabled = localRpcEndpointEnabled;
+            options.RollbackEntityOperationsOnExceptions = rollbackEntityOperationsOnExceptions;
+            options.EntityMessageReorderWindowInMinutes = entityMessageReorderWindowInMinutes;
+
+            // Azure Storage specfic tests
+            if (string.Equals(storageProviderType, AzureStorageProviderType))
+            {
+                options.StorageProvider["ConnectionName"] = "AzureWebJobsStorage";
+                options.StorageProvider["fetchLargeMessagesAutomatically"] = autoFetchLargeMessages;
+                if (maxQueuePollingInterval != null)
+                {
+                    options.StorageProvider["maxQueuePollingInterval"] = maxQueuePollingInterval.Value;
+                }
+            }
 
             if (eventGridRetryCount.HasValue)
             {
-                durableTaskOptions.EventGridPublishRetryCount = eventGridRetryCount.Value;
+                options.Notifications.EventGrid.PublishRetryCount = eventGridRetryCount.Value;
             }
 
             if (eventGridRetryInterval.HasValue)
             {
-                durableTaskOptions.EventGridPublishRetryInterval = eventGridRetryInterval.Value;
+                options.Notifications.EventGrid.PublishRetryInterval = eventGridRetryInterval.Value;
             }
 
             if (eventGridRetryHttpStatus != null)
             {
-                durableTaskOptions.EventGridPublishRetryHttpStatus = eventGridRetryHttpStatus;
+                options.Notifications.EventGrid.PublishRetryHttpStatus = eventGridRetryHttpStatus;
             }
 
             if (maxQueuePollingInterval != null)
             {
-                durableTaskOptions.MaxQueuePollingInterval = maxQueuePollingInterval.Value;
+                options.StorageProvider["maxQueuePollingInterval"] = maxQueuePollingInterval.Value;
+            }
+
+            return GetJobHostWithOptions(
+                loggerProvider: loggerProvider,
+                durableTaskOptions: options,
+                storageProviderType: storageProviderType,
+                nameResolver: nameResolver,
+                durableHttpMessageHandler: durableHttpMessageHandler,
+                lifeCycleNotificationHelper: lifeCycleNotificationHelper,
+                serializerSettings: serializerSettings,
+                onSend: onSend,
+                addDurableClientFactory: addDurableClientFactory,
+                types: types,
+                configureScaleOptions: configureScaleOptions,
+                durabilityProviderFactoryType: durabilityProviderFactoryType);
+        }
+
+        public static ITestHost GetJobHostWithOptions(
+            ILoggerProvider loggerProvider,
+            DurableTaskOptions durableTaskOptions,
+            string storageProviderType = AzureStorageProviderType,
+            INameResolver nameResolver = null,
+            IDurableHttpMessageHandlerFactory durableHttpMessageHandler = null,
+            ILifeCycleNotificationHelper lifeCycleNotificationHelper = null,
+            IMessageSerializerSettingsFactory serializerSettings = null,
+            Action<ITelemetry> onSend = null,
+            Type durabilityProviderFactoryType = null,
+            bool addDurableClientFactory = false,
+            Action<ScaleOptions> configureScaleOptions = null,
+            Type[] types = null)
+        {
+            if (serializerSettings == null)
+            {
+                serializerSettings = new MessageSerializerSettingsFactory();
             }
 
             var optionsWrapper = new OptionsWrapper<DurableTaskOptions>(durableTaskOptions);
             var testNameResolver = new TestNameResolver(nameResolver);
-            return PlatformSpecificHelpers.CreateJobHost(optionsWrapper, loggerProvider, testNameResolver);
+            if (durableHttpMessageHandler == null)
+            {
+                durableHttpMessageHandler = new DurableHttpMessageHandlerFactory();
+            }
+
+            ITypeLocator typeLocator = types == null ? GetTypeLocator() : new ExplicitTypeLocator(types);
+
+            return PlatformSpecificHelpers.CreateJobHost(
+                options: optionsWrapper,
+                storageProvider: storageProviderType,
+                durabilityProviderFactoryType: durabilityProviderFactoryType,
+                addDurableClientFactory: addDurableClientFactory,
+                typeLocator: typeLocator,
+                configureScaleOptions: configureScaleOptions,
+                loggerProvider: loggerProvider,
+                nameResolver: testNameResolver,
+                durableHttpMessageHandler: durableHttpMessageHandler,
+                lifeCycleNotificationHelper: lifeCycleNotificationHelper,
+                serializerSettingsFactory: serializerSettings,
+                onSend: onSend);
         }
 
+        public static IHost GetJobHostExternalEnvironment(IStorageServiceClientProviderFactory clientProviderFactory = null)
+        {
+            if (clientProviderFactory == null)
+            {
+                clientProviderFactory = new TestStorageServiceClientProviderFactory();
+            }
+
+            return GetJobHostWithOptionsForDurableClientFactoryExternal(clientProviderFactory);
+        }
+
+        public static IHost GetJobHostWithOptionsForDurableClientFactoryExternal(IStorageServiceClientProviderFactory clientProviderFactory)
+        {
+            return PlatformSpecificHelpers.CreateJobHostExternalEnvironment(clientProviderFactory);
+        }
+
+        public static ITestHost GetJobHostWithMultipleDurabilityProviders(
+            DurableTaskOptions options = null,
+            IEnumerable<IDurabilityProviderFactory> durabilityProviderFactories = null)
+        {
+            if (options == null)
+            {
+                options = new DurableTaskOptions();
+            }
+
+            return GetJobHostWithOptionsWithMultipleDurabilityProviders(
+                options,
+                durabilityProviderFactories);
+        }
+
+        public static ITestHost GetJobHostWithOptionsWithMultipleDurabilityProviders(
+            DurableTaskOptions durableTaskOptions,
+            IEnumerable<IDurabilityProviderFactory> durabilityProviderFactories = null)
+        {
+            var optionsWrapper = new OptionsWrapper<DurableTaskOptions>(durableTaskOptions);
+
+            return PlatformSpecificHelpers.CreateJobHostWithMultipleDurabilityProviders(
+                optionsWrapper,
+                durabilityProviderFactories);
+        }
+
+#pragma warning disable CS0612 // Type or member is obsolete
+        public static IPlatformInformation GetMockPlatformInformationService(
+            bool inConsumption = false,
+            OperatingSystem operatingSystem = OperatingSystem.Windows,
+            WorkerRuntimeType language = WorkerRuntimeType.DotNet,
+            string getLinuxStampName = "",
+            string getContainerName = "")
+#pragma warning restore CS0612 // Type or member is obsolete
+        {
+#pragma warning disable CS0612 // Type or member is obsolete
+            var mockPlatformProvider = new Mock<IPlatformInformation>();
+#pragma warning restore CS0612 // Type or member is obsolete
+            mockPlatformProvider.Setup(x => x.GetOperatingSystem()).Returns(operatingSystem);
+            mockPlatformProvider.Setup(x => x.IsInConsumptionPlan()).Returns(inConsumption);
+            mockPlatformProvider.Setup(x => x.GetLinuxStampName()).Returns(getLinuxStampName);
+            mockPlatformProvider.Setup(x => x.GetContainerName()).Returns(getContainerName);
+            mockPlatformProvider.Setup(x => x.GetWorkerRuntimeType()).Returns(language);
+            return mockPlatformProvider.Object;
+        }
+
+        public static DurableTaskOptions GetDurableTaskOptionsForStorageProvider(string storageProvider)
+        {
+            switch (storageProvider)
+            {
+                case AzureStorageProviderType:
+                case RedisProviderType:
+                case EmulatorProviderType:
+                    return new DurableTaskOptions();
+                default:
+                    throw new InvalidOperationException($"Storage provider {storageProvider} is not supported for testing infrastructure.");
+            }
+        }
+
+        /// <summary>
+        /// Returns <c>true</c> if a JSON Durable log has all the minimum-required keys.
+        /// Else, returns <c>false</c>.
+        /// </summary>
+        /// <param name="json">The JSON log to validate.</param>
+        public static bool IsValidJSONLog(JObject json)
+        {
+            List<string> expectedKeys = new List<string>
+            {
+                "EventStampName",
+                "EventPrimaryStampName",
+                "ProviderName",
+                "TaskName",
+                "EventId",
+                "EventTimestamp",
+                "Tenant",
+                "Pid",
+                "Tid",
+            };
+
+            foreach (string expectedKey in expectedKeys)
+            {
+                if (!json.TryGetValue(expectedKey, out _))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Read a file's contents, line by line, even if another process is currently writing to it.
+        /// </summary>
+        /// <param name="path">The file's path.</param>
+        /// <returns>An array of each line in the file.</returns>
+        public static List<string> WriteSafeReadAllLines(string path)
+        {
+            /* A method like File.ReadAllLines cannot open a file that is open for writing by another process
+             * This is due to the File.ReadAllLines  not opening the process with ReadWrite permissions.
+             * As a result, we implement a variant ReadAllLines with the right permission mode.
+             *
+             * More info in: https://stackoverflow.com/questions/12744725/how-do-i-perform-file-readalllines-on-a-file-that-is-also-open-in-excel
+             */
+            using (var fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var streamReader = new StreamReader(fileStream, Encoding.Default))
+            {
+                List<string> file = new List<string>();
+                while (!streamReader.EndOfStream)
+                {
+                    file.Add(streamReader.ReadLine());
+                }
+
+                return file;
+            }
+        }
+
+        /// <summary>
+        /// Helper function to regularly poll for some condition until it is true. If timeout hits, throw timeoutexception.
+        /// </summary>
+        /// <param name="predicate">Predicate to wait until it returns true.</param>
+        /// <param name="timeout">Time to wait until predicate is true.</param>
+        /// <param name="retryInterval">How frequently to test predicate. Defaults to 100 ms.</param>
+        public static async Task WaitUntilTrue(Func<bool> predicate, string conditionDescription, TimeSpan timeout, TimeSpan? retryInterval = null)
+        {
+            if (retryInterval == null)
+            {
+                retryInterval = TimeSpan.FromMilliseconds(100);
+            }
+
+            Stopwatch sw = Stopwatch.StartNew();
+
+            do
+            {
+                if (predicate())
+                {
+                    return;
+                }
+
+                await Task.Delay(retryInterval.Value);
+            }
+            while (sw.Elapsed < timeout);
+
+            throw new TimeoutException($"Did not meet {conditionDescription} within {timeout}");
+        }
+
+        // Create a valid task hub from the test name, and add a random suffix to avoid conflicts
         public static string GetTaskHubNameFromTestName(string testName, bool enableExtendedSessions)
         {
-            return testName.Replace("_", "") + (enableExtendedSessions ? "EX" : "") + PlatformSpecificHelpers.VersionSuffix;
+            string strippedTestName = testName.Replace("_", "");
+            string truncatedTestName = strippedTestName.Substring(0, Math.Min(35, strippedTestName.Length));
+            string testPropertiesSuffix = (enableExtendedSessions ? "EX" : "") + PlatformSpecificHelpers.VersionSuffix;
+            string randomSuffix = Guid.NewGuid().ToString().Substring(0, 4);
+            return truncatedTestName + testPropertiesSuffix + randomSuffix;
         }
 
         public static ITypeLocator GetTypeLocator()
@@ -88,7 +381,11 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             {
                 typeof(TestOrchestrations),
                 typeof(TestActivities),
+                typeof(TestEntities),
+                typeof(TestEntityClasses),
                 typeof(ClientFunctions),
+                typeof(UnconstructibleClass),
+                typeof(TestEntityWithDependencyInjectionHelpers),
             };
 
             ITypeLocator typeLocator = new ExplicitTypeLocator(types);
@@ -106,7 +403,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             var settings = new AzureStorageOrchestrationServiceSettings
             {
                 TaskHubName = hubName,
-                StorageConnectionString = GetStorageConnectionString(),
+                StorageAccountClientProvider = new StorageAccountClientProvider(GetStorageConnectionString()),
             };
 
             var service = new AzureStorageOrchestrationService(settings);
@@ -304,9 +601,9 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
         {
             var list = new List<string>()
             {
-                $"{messageId}: Function '{functionNames[0]} ({FunctionType.Orchestrator})' scheduled. Reason: NewInstance. IsReplay: False. State: Scheduled.",
-                $"{messageId}: Function '{functionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: False. Input: \"World\". State: Started.",
-                $"{messageId}: Function '{functionNames[0]} ({FunctionType.Orchestrator})' completed. ContinuedAsNew: False. IsReplay: False. Output: \"Hello, World!\". State: Completed.",
+                $"{messageId}: Function '{functionNames[0]} ({FunctionType.Orchestrator})' scheduled. Reason: NewInstance. IsReplay: False. State: Scheduled. RuntimeStatus: Pending.",
+                $"{messageId}: Function '{functionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: False. Input: \"World\". State: Started. RuntimeStatus: Running.",
+                $"{messageId}: Function '{functionNames[0]} ({FunctionType.Orchestrator})' completed. ContinuedAsNew: False. IsReplay: False. Output: \"Hello, World!\". State: Completed. RuntimeStatus: Completed.",
                 $"{messageId}: Function '{functionNames[0]} ({FunctionType.Orchestrator})' failed to send a 'Started' notification event to Azure Event Grid. Status code: 500. Details: {{\"message\":\"Exception has been thrown\"}}. ",
                 $"{messageId}: Function '{functionNames[0]} ({FunctionType.Orchestrator})' failed to send a 'Completed' notification event to Azure Event Grid. Status code: 500. Details: {{\"message\":\"Exception has been thrown\"}}. ",
             };
@@ -373,11 +670,11 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             var list = new List<string>()
             {
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' scheduled. Reason: NewInstance. IsReplay: False.",
-                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: False. Input: \"00:00:10\"",
+                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: False. Input: \"00:00:02\"",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' is waiting for input. Reason: WaitForExternalEvent:approval. IsReplay: False.",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' is waiting for input. Reason: CreateTimer:{timerTimestamp}. IsReplay: False.",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' awaited. IsReplay: False.",
-                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: True. Input: \"00:00:10\"",
+                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: True. Input: \"00:00:02\"",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' is waiting for input. Reason: WaitForExternalEvent:approval. IsReplay: True.",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' is waiting for input. Reason: CreateTimer:{timerTimestamp}. IsReplay: True.",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' was resumed by a timer scheduled for '{timerTimestamp}'. IsReplay: False. State: TimerExpired",
@@ -392,7 +689,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             var list = new List<string>()
             {
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' scheduled. Reason: NewInstance. IsReplay: False.",
-                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: False. Input: null",
+                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: False. Input: ",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' failed with an error. Reason: System.ArgumentNullException: Value cannot be null.",
             };
 
@@ -411,7 +708,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
                 $"{messageId}: Function '{activityFunctionName} ({FunctionType.Activity})' failed with an error. Reason: System.InvalidOperationException: Kah-BOOOOM!!!",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: True. Input: \"Kah-BOOOOM!!!\"",
                 $"{messageId}: Function '{activityFunctionName} ({FunctionType.Activity})' scheduled. Reason: ThrowOrchestrator. IsReplay: True.",
-                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' failed with an error. Reason: Microsoft.Azure.WebJobs.FunctionFailedException: The activity function 'ThrowActivity' failed: \"Kah-BOOOOM!!!\"",
+                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' failed with an error. Reason: Microsoft.Azure.WebJobs.Extensions.DurableTask.FunctionFailedException: The activity function 'ThrowActivity' failed: \"Kah-BOOOOM!!!\"",
             };
 
             return list;
@@ -448,7 +745,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' awaited. IsReplay: False.",
                 $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: True. Input: \"Kah-BOOOOM!!!\"",
                 $"{messageId}: Function '{activityFunctionName} ({FunctionType.Activity})' scheduled. Reason: ActivityThrowWithRetry. IsReplay: True.",
-                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' failed with an error. Reason: Microsoft.Azure.WebJobs.FunctionFailedException: The activity function 'ThrowActivity' failed: \"Kah-BOOOOM!!!\"",
+                $"{messageId}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' failed with an error. Reason: Microsoft.Azure.WebJobs.Extensions.DurableTask.FunctionFailedException: The activity function 'ThrowActivity' failed: \"Kah-BOOOOM!!!\"",
             };
 
             return list;
@@ -520,7 +817,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
                 $"{messageIds[1]}:0: Function '{orchestratorFunctionNames[1]} ({FunctionType.Orchestrator})' completed. ContinuedAsNew: False. IsReplay: False. Output: \"Hello,",
                 $"{messageIds[0]}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' started. IsReplay: True.",
                 $"{messageIds[0]}: Function '{orchestratorFunctionNames[1]} ({FunctionType.Orchestrator})' scheduled. Reason: OrchestratorGreeting. IsReplay: True.",
-                $"{messageIds[0]}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' completed. ContinuedAsNew: False. IsReplay: False. Output: (null)",
+                $"{messageIds[0]}: Function '{orchestratorFunctionNames[0]} ({FunctionType.Orchestrator})' completed. ContinuedAsNew: False. IsReplay: False. Output: ",
             };
 
             return list;
@@ -621,6 +918,37 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
         internal static INameResolver GetTestNameResolver()
         {
             return new TestNameResolver(null);
+        }
+
+        public static async Task<string> LoadStringFromTextBlobAsync(string blobName)
+        {
+            string connectionString = GetStorageConnectionString();
+            var blobServiceClient = new BlobServiceClient(connectionString);
+            BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient("test");
+            BlockBlobClient blob = containerClient.GetBlockBlobClient(blobName);
+            try
+            {
+                BlobDownloadResult result = await blob.DownloadContentAsync();
+                return result.Content.ToString();
+            }
+            catch (RequestFailedException e) when (e.Status == 404)
+            {
+                // if the blob does not exist, just return null.
+                return null;
+            }
+        }
+
+        public static async Task WriteStringToTextBlob(string blobName, string content)
+        {
+            string connectionString = GetStorageConnectionString();
+            var blobServiceClient = new BlobServiceClient(connectionString);
+            BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient("test");
+            BlockBlobClient blob = containerClient.GetBlockBlobClient(blobName);
+
+            using (var buffer = new MemoryStream(Encoding.UTF8.GetBytes(content)))
+            {
+                await blob.UploadAsync(buffer);
+            }
         }
 
         private class ExplicitTypeLocator : ITypeLocator

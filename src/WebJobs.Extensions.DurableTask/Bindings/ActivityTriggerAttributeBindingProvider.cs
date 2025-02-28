@@ -1,13 +1,12 @@
 ﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the MIT License. See LICENSE in the project root for license information.
-
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs.Host.Bindings;
-using Microsoft.Azure.WebJobs.Host.Config;
 using Microsoft.Azure.WebJobs.Host.Listeners;
 using Microsoft.Azure.WebJobs.Host.Protocols;
 using Microsoft.Azure.WebJobs.Host.Triggers;
@@ -18,20 +17,17 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
     internal class ActivityTriggerAttributeBindingProvider : ITriggerBindingProvider
     {
         private readonly DurableTaskExtension durableTaskConfig;
-        private readonly ExtensionConfigContext extensionContext;
-        private readonly EndToEndTraceHelper traceHelper;
+        private readonly string connectionName;
 
         public ActivityTriggerAttributeBindingProvider(
             DurableTaskExtension durableTaskConfig,
-            ExtensionConfigContext extensionContext,
-            EndToEndTraceHelper traceHelper)
+            string connectionName)
         {
             this.durableTaskConfig = durableTaskConfig;
-            this.extensionContext = extensionContext;
-            this.traceHelper = traceHelper;
+            this.connectionName = connectionName;
         }
 
-        public Task<ITriggerBinding> TryCreateAsync(TriggerBindingProviderContext context)
+        public Task<ITriggerBinding?> TryCreateAsync(TriggerBindingProviderContext context)
         {
             if (context == null)
             {
@@ -39,10 +35,10 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
             }
 
             ParameterInfo parameter = context.Parameter;
-            ActivityTriggerAttribute trigger = parameter.GetCustomAttribute<ActivityTriggerAttribute>(inherit: false);
+            ActivityTriggerAttribute? trigger = parameter.GetCustomAttribute<ActivityTriggerAttribute>(inherit: false);
             if (trigger == null)
             {
-                return Task.FromResult<ITriggerBinding>(null);
+                return Task.FromResult<ITriggerBinding?>(null);
             }
 
             // Priority for getting the name is [ActivityTrigger], [FunctionName], method name
@@ -56,8 +52,8 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
             // The activity name defaults to the method name.
             var activityName = new FunctionName(name);
             this.durableTaskConfig.RegisterActivity(activityName, null);
-            var binding = new ActivityTriggerBinding(this, parameter, trigger, activityName);
-            return Task.FromResult<ITriggerBinding>(binding);
+            var binding = new ActivityTriggerBinding(this, parameter, trigger, activityName, this.durableTaskConfig);
+            return Task.FromResult<ITriggerBinding?>(binding);
         }
 
         private class ActivityTriggerBinding : ITriggerBinding
@@ -70,21 +66,24 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
             private readonly ActivityTriggerAttribute attribute;
             private readonly FunctionName activityName;
             private readonly IReadOnlyDictionary<string, Type> contract;
+            private readonly DurableTaskExtension durableTaskConfig;
 
             public ActivityTriggerBinding(
                 ActivityTriggerAttributeBindingProvider parent,
                 ParameterInfo parameterInfo,
                 ActivityTriggerAttribute attribute,
-                FunctionName activity)
+                FunctionName activity,
+                DurableTaskExtension durableTaskConfig)
             {
                 this.parent = parent;
                 this.parameterInfo = parameterInfo;
                 this.attribute = attribute;
                 this.activityName = activity;
                 this.contract = GetBindingDataContract(parameterInfo);
+                this.durableTaskConfig = durableTaskConfig;
             }
 
-            public Type TriggerValueType => typeof(DurableActivityContext);
+            public Type TriggerValueType => typeof(IDurableActivityContext);
 
             public IReadOnlyDictionary<string, Type> BindingDataContract => this.contract;
 
@@ -98,7 +97,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
                 };
 
                 // allow binding to the parameter name
-                contract[parameterInfo.Name] = parameterInfo.ParameterType;
+                contract[parameterInfo.Name!] = parameterInfo.ParameterType;
 
                 // allow binding directly to the JSON representation of the data.
                 contract[DataBindingPropertyName] = typeof(JValue);
@@ -108,16 +107,29 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
 
             public Task<ITriggerData> BindAsync(object value, ValueBindingContext context)
             {
-                var activityContext = (DurableActivityContext)value;
+                // If we are not directly passed a DurableActivityContext, we can assume we are being called directly
+                // by the admin API. This is mainly used for the Azure Portal execution scenario.
+                if (value is not DurableActivityContext activityContext)
+                {
+                    if (value is not string serializedInput)
+                    {
+                        throw new InvalidOperationException($"Cannot execute an Activity Trigger without a {nameof(DurableActivityContext)} or a {nameof(String)} that represents the serialized input.");
+                    }
+
+                    // Durable functions expects input as a JArray with one element.
+                    serializedInput = $"[{serializedInput}]";
+
+                    activityContext = new DurableActivityContext(this.durableTaskConfig, Guid.NewGuid().ToString(), serializedInput, this.activityName.Name);
+                }
+
                 Type destinationType = this.parameterInfo.ParameterType;
 
-                object convertedValue;
+                object? convertedValue;
                 if (destinationType == typeof(object))
                 {
                     convertedValue = value;
                 }
-                else if (destinationType == typeof(DurableActivityContext) ||
-                    destinationType == typeof(DurableActivityContextBase))
+                else if (destinationType == typeof(IDurableActivityContext))
                 {
                     convertedValue = activityContext;
                 }
@@ -136,9 +148,9 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
 
                 // Note that there could be conflicts in thiese dictionary keys, in which case
                 // the order here determines which binding rule will win.
-                var bindingData = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-                bindingData[InstanceIdBindingPropertyName] = activityContext.InstanceId;
-                bindingData[this.parameterInfo.Name] = convertedValue;
+                var bindingData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                bindingData[InstanceIdBindingPropertyName] = ((IDurableActivityContext)activityContext).InstanceId;
+                bindingData[this.parameterInfo.Name!] = convertedValue;
                 bindingData[DataBindingPropertyName] = activityContext.GetInputAsJson();
 
                 var triggerData = new TriggerData(inputValueProvider, bindingData);
@@ -165,21 +177,22 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
 
                 var listener = new DurableTaskListener(
                     this.parent.durableTaskConfig,
+                    context.Descriptor.Id,
                     this.activityName,
-                    context.Executor,
-                    isOrchestrator: false);
+                    FunctionType.Activity,
+                    this.parent.connectionName);
                 return Task.FromResult<IListener>(listener);
             }
 
-            private static JObject ActivityContextToJObject(DurableActivityContext arg)
+            private static JObject? ActivityContextToJObject(IDurableActivityContext arg)
             {
-                JToken token = arg.GetInputAsJson();
+                JToken token = ((DurableActivityContext)arg).GetInputAsJson();
                 if (token == null)
                 {
                     return null;
                 }
 
-                JObject jObj = token as JObject;
+                JObject? jObj = token as JObject;
                 if (jObj == null)
                 {
                     throw new ArgumentException($"Cannot convert '{token}' to a JSON object.");

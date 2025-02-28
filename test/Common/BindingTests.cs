@@ -2,13 +2,14 @@
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using System.Threading.Tasks;
-using Microsoft.Azure.WebJobs.Host;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Azure.Storage.Blobs.Specialized;
 using Microsoft.Azure.WebJobs.Host.TestCommon;
-using Microsoft.Extensions.Logging;
-using Microsoft.WindowsAzure.Storage;
-using Microsoft.WindowsAzure.Storage.Blob;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -25,12 +26,111 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             this.loggerProvider = new TestLoggerProvider(output);
         }
 
+        /// <summary>
+        /// Tests DurableClient attribute binds a client instance with the IDurableOrchestrationClient interface.
+        /// </summary>
         [Fact]
         [Trait("Category", PlatformSpecificHelpers.TestCategory)]
-        [Trait("Category", PlatformSpecificHelpers.TestCategory + "_BVT")]
-        public async Task ActivityTriggerAsJObject()
+        public async Task IDurableOrchestrationClientBinding()
         {
-            using (JobHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.ActivityTriggerAsJObject), false))
+            using (var host = TestHelpers.GetJobHost(
+                this.loggerProvider,
+                nameof(this.IDurableOrchestrationClientBinding),
+                enableExtendedSessions: false))
+            {
+                await host.StartAsync();
+
+                IDurableOrchestrationClient client = await host.GetOrchestrationClientBindingTest(this.output);
+
+                await host.StopAsync();
+            }
+        }
+
+        /// <summary>
+        /// Tests DurableClient attribute binds a client instance with the IDurableEntityClient interface.
+        /// </summary>
+        [Fact]
+        [Trait("Category", PlatformSpecificHelpers.TestCategory)]
+        public async Task IDurableEntityClientBinding()
+        {
+            using (var host = TestHelpers.GetJobHost(
+                this.loggerProvider,
+                nameof(this.IDurableEntityClientBinding),
+                enableExtendedSessions: false))
+            {
+                await host.StartAsync();
+
+                IDurableEntityClient client = await host.GetEntityClientBindingTest(this.output);
+
+                await host.StopAsync();
+            }
+        }
+
+        /// <summary>
+        /// Tests OrchestrationClient attribute binds a client instance with the IDurableOrchestrationClient interface.
+        /// </summary>
+        [Fact]
+        [Trait("Category", PlatformSpecificHelpers.TestCategory)]
+        public async Task IDurableOrchestrationClientBindingBackComp()
+        {
+            using (var host = TestHelpers.GetJobHost(
+                this.loggerProvider,
+                nameof(this.IDurableOrchestrationClientBinding),
+                enableExtendedSessions: false))
+            {
+                await host.StartAsync();
+
+                var startFunction = typeof(ClientFunctions)
+                    .GetMethod(nameof(ClientFunctions.GetOrchestrationClientBindingBackCompTest));
+
+                var clientRef = new IDurableOrchestrationClient[1];
+                var args = new Dictionary<string, object>
+                {
+                    { "clientRef", clientRef },
+                };
+
+                await host.CallAsync(startFunction, args);
+                IDurableOrchestrationClient client = clientRef[0];
+
+                await host.StopAsync();
+            }
+        }
+
+        /// <summary>
+        /// Tests OrchestrationClient attribute binds a client instance with the IDurableEntityClient interface.
+        /// </summary>
+        [Fact]
+        [Trait("Category", PlatformSpecificHelpers.TestCategory)]
+        public async Task IDurableEntityClientBindingBackComp()
+        {
+            using (var host = TestHelpers.GetJobHost(
+                this.loggerProvider,
+                nameof(this.IDurableEntityClientBindingBackComp),
+                enableExtendedSessions: false))
+            {
+                await host.StartAsync();
+
+                var startFunction = typeof(ClientFunctions)
+                    .GetMethod(nameof(ClientFunctions.GetEntityClientBindingBackCompTest));
+                var clientRef = new IDurableEntityClient[1];
+                var args = new Dictionary<string, object>
+                {
+                    { "clientRef", clientRef },
+                };
+                await host.CallAsync(startFunction, args);
+                IDurableEntityClient client = clientRef[0];
+
+                await host.StopAsync();
+            }
+        }
+
+        [Theory]
+        [Trait("Category", PlatformSpecificHelpers.TestCategory)]
+        [Trait("Category", PlatformSpecificHelpers.TestCategory + "_BVT")]
+        [MemberData(nameof(TestDataGenerator.GetFullFeaturedStorageProviderOptions), MemberType = typeof(TestDataGenerator))]
+        private async Task ActivityTriggerAsJObject(string storageProviderType)
+        {
+            using (ITestHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.ActivityTriggerAsJObject), false, storageProviderType))
             {
                 await host.StartAsync();
 
@@ -51,11 +151,12 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             }
         }
 
-        [Fact]
+        [Theory]
         [Trait("Category", PlatformSpecificHelpers.TestCategory)]
-        public async Task ActivityTriggerAsPOCO()
+        [MemberData(nameof(TestDataGenerator.GetFullFeaturedStorageProviderOptions), MemberType = typeof(TestDataGenerator))]
+        public async Task ActivityTriggerAsPOCO(string storageProviderType)
         {
-            using (JobHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.ActivityTriggerAsPOCO), false))
+            using (ITestHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.ActivityTriggerAsPOCO), false, storageProviderType))
             {
                 await host.StartAsync();
 
@@ -77,11 +178,12 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             }
         }
 
-        [Fact]
+        [Theory]
         [Trait("Category", PlatformSpecificHelpers.TestCategory)]
-        public async Task ActivityTriggerAsNumber()
+        [MemberData(nameof(TestDataGenerator.GetFullFeaturedStorageProviderOptions), MemberType = typeof(TestDataGenerator))]
+        public async Task ActivityTriggerAsNumber(string storageProviderType)
         {
-            using (JobHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.ActivityTriggerAsNumber), false))
+            using (ITestHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.ActivityTriggerAsNumber), false, storageProviderType))
             {
                 await host.StartAsync();
 
@@ -101,35 +203,38 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             }
         }
 
-        [Fact]
+        [Theory]
         [Trait("Category", PlatformSpecificHelpers.TestCategory)]
-        public async Task BindToBlobViaParameterName()
+        [MemberData(nameof(TestDataGenerator.GetFullFeaturedStorageProviderOptions), MemberType = typeof(TestDataGenerator))]
+        public async Task BindToBlobViaParameterName(string storageProviderType)
         {
-            using (JobHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.BindToBlobViaParameterName), false))
+            using (ITestHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.BindToBlobViaParameterName), false, storageProviderType))
             {
                 await host.StartAsync();
 
                 string connectionString = TestHelpers.GetStorageConnectionString();
-                CloudStorageAccount account = CloudStorageAccount.Parse(connectionString);
-                this.output.WriteLine($"Using storage account: {account.Credentials.AccountName}");
+                var blobServiceClient = new BlobServiceClient(connectionString);
+                this.output.WriteLine($"Using storage account: {blobServiceClient.AccountName}");
 
                 // Blob and container names need to be kept in sync with the activity code.
                 const string OriginalBlobName = "MyBlob";
                 const string UpdatedBlobName = OriginalBlobName + "-archive";
                 const string ContainerName = "test";
 
-                CloudBlobClient blobClient = account.CreateCloudBlobClient();
-                CloudBlobContainer container = blobClient.GetContainerReference(ContainerName);
-                if (await container.CreateIfNotExistsAsync())
+                BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient(ContainerName);
+                if (await containerClient.CreateIfNotExistsAsync() != null)
                 {
-                    this.output.WriteLine($"Created container '{container.Name}'.");
+                    this.output.WriteLine($"Created container '{containerClient.Name}'.");
                 }
 
                 string randomData = Guid.NewGuid().ToString("N");
 
-                CloudBlockBlob blob = container.GetBlockBlobReference(OriginalBlobName);
-                await blob.UploadTextAsync(randomData);
-                this.output.WriteLine($"Uploaded text '{randomData}' to {blob.Name}.");
+                using (var buffer = new MemoryStream(Encoding.UTF8.GetBytes(randomData)))
+                {
+                    BlockBlobClient blob = containerClient.GetBlockBlobClient(OriginalBlobName);
+                    await blob.UploadAsync(buffer);
+                    this.output.WriteLine($"Uploaded text '{randomData}' to {blob.Name}.");
+                }
 
                 // Using StartOrchestrationArgs to start an activity function because it's easier than creating a new type.
                 var startArgs = new StartOrchestrationArgs();
@@ -141,8 +246,9 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
 
                 Assert.Equal(OrchestrationRuntimeStatus.Completed, status?.RuntimeStatus);
 
-                CloudBlockBlob newBlob = container.GetBlockBlobReference(UpdatedBlobName);
-                string copiedData = await newBlob.DownloadTextAsync();
+                BlockBlobClient newBlob = containerClient.GetBlockBlobClient(UpdatedBlobName);
+                BlobDownloadResult result = await newBlob.DownloadContentAsync();
+                string copiedData = result.Content.ToString();
                 this.output.WriteLine($"Downloaded text '{copiedData}' from {newBlob.Name}.");
 
                 Assert.Equal(randomData, copiedData);
@@ -151,17 +257,18 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
             }
         }
 
-        [Fact]
+        [Theory]
         [Trait("Category", PlatformSpecificHelpers.TestCategory)]
-        public async Task BindToBlobViaPOCO()
+        [MemberData(nameof(TestDataGenerator.GetFullFeaturedStorageProviderOptions), MemberType = typeof(TestDataGenerator))]
+        public async Task BindToBlobViaPOCO(string storageProviderType)
         {
-            using (JobHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.BindToBlobViaPOCO), false))
+            using (ITestHost host = TestHelpers.GetJobHost(this.loggerProvider, nameof(this.BindToBlobViaPOCO), false, storageProviderType))
             {
                 await host.StartAsync();
 
                 string connectionString = TestHelpers.GetStorageConnectionString();
-                CloudStorageAccount account = CloudStorageAccount.Parse(connectionString);
-                this.output.WriteLine($"Using storage account: {account.Credentials.AccountName}");
+                var blobServiceClient = new BlobServiceClient(connectionString);
+                this.output.WriteLine($"Using storage account: {blobServiceClient.AccountName}");
 
                 // Blob and container names need to be kept in sync with the activity code.
                 var data = new
@@ -175,19 +282,20 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
                 string inputBlobName = $"{data.InputPrefix}-{data.Suffix}";
                 string outputBlobName = $"{data.OutputPrefix}-{data.Suffix}";
 
-                CloudBlobClient blobClient = account.CreateCloudBlobClient();
-                CloudBlobContainer container = blobClient.GetContainerReference(ContainerName);
-                if (await container.CreateIfNotExistsAsync())
+                BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient(ContainerName);
+                if (await containerClient.CreateIfNotExistsAsync() != null)
                 {
-                    this.output.WriteLine($"Created container '{container.Name}'.");
+                    this.output.WriteLine($"Created container '{containerClient.Name}'.");
                 }
 
                 string randomData = Guid.NewGuid().ToString("N");
-
-                this.output.WriteLine($"Creating blob named {outputBlobName}...");
-                CloudBlockBlob blob = container.GetBlockBlobReference(inputBlobName);
-                await blob.UploadTextAsync(randomData);
-                this.output.WriteLine($"Uploaded text '{randomData}' to {blob.Name}.");
+                using (var buffer = new MemoryStream(Encoding.UTF8.GetBytes(randomData)))
+                {
+                    this.output.WriteLine($"Creating blob named {outputBlobName}...");
+                    BlockBlobClient blob = containerClient.GetBlockBlobClient(inputBlobName);
+                    await blob.UploadAsync(buffer);
+                    this.output.WriteLine($"Uploaded text '{randomData}' to {blob.Name}.");
+                }
 
                 // Using StartOrchestrationArgs to start an activity function because it's easier than creating a new type.
                 var startArgs = new StartOrchestrationArgs();
@@ -200,8 +308,9 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask.Tests
                 Assert.Equal(OrchestrationRuntimeStatus.Completed, status?.RuntimeStatus);
 
                 this.output.WriteLine($"Searching for blob named {outputBlobName}...");
-                CloudBlockBlob newBlob = container.GetBlockBlobReference(outputBlobName);
-                string copiedData = await newBlob.DownloadTextAsync();
+                BlockBlobClient newBlob = containerClient.GetBlockBlobClient(outputBlobName);
+                BlobDownloadResult result = await newBlob.DownloadContentAsync();
+                string copiedData = result.Content.ToString();
                 this.output.WriteLine($"Downloaded text '{copiedData}' from {newBlob.Name}.");
 
                 Assert.Equal(randomData, copiedData);
