@@ -2,39 +2,29 @@
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 
 using System;
-using System.Reflection;
+using System.IO;
 using System.Text;
 using DurableTask.Core.Serializing;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Newtonsoft.Json.Serialization;
 
 namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
 {
     internal class MessagePayloadDataConverter : JsonDataConverter
     {
-        // The default JsonDataConverter for DTFx includes type information in JSON objects. This causes issues
-        // because the type information generated from C# scripts cannot be understood by DTFx. For this reason, explicitly
-        // configure the JsonDataConverter to not include CLR type information. This is also safer from a security perspective.
-        internal static readonly JsonSerializerSettings MessageSettings = new JsonSerializerSettings
-        {
-            TypeNameHandling = TypeNameHandling.None,
-        };
-
-        private static readonly JsonSerializerSettings ErrorSettings = new JsonSerializerSettings
-        {
-            ContractResolver = new ExceptionResolver(),
-            TypeNameHandling = TypeNameHandling.Objects,
-        };
-
-        // Default singleton instances
-        public static readonly MessagePayloadDataConverter Default = new MessagePayloadDataConverter(MessageSettings);
-        public static readonly MessagePayloadDataConverter ErrorConverter = new MessagePayloadDataConverter(ErrorSettings);
-
-        public MessagePayloadDataConverter(JsonSerializerSettings settings)
+        public MessagePayloadDataConverter(JsonSerializerSettings settings, bool isDefault)
             : base(settings)
         {
+            this.IsDefault = isDefault;
+            this.JsonSettings = settings;
+            this.JsonSerializer = JsonSerializer.Create(settings);
         }
+
+        public bool IsDefault { get; }
+
+        internal JsonSerializerSettings JsonSettings { get; }
+
+        internal JsonSerializer JsonSerializer { get; }
 
         /// <summary>
         /// JSON-serializes the specified object.
@@ -50,6 +40,11 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
         /// </summary>
         public string Serialize(object value, int maxSizeInKB)
         {
+            if (value == null)
+            {
+                return null;
+            }
+
             string serializedJson;
 
             JToken json = value as JToken;
@@ -79,21 +74,34 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
             return serializedJson;
         }
 
-        private class ExceptionResolver : DefaultContractResolver
+        public static JToken ConvertToJToken(string input)
         {
-            protected override JsonProperty CreateProperty(MemberInfo member, MemberSerialization memberSerialization)
+            JToken token = null;
+            if (input != null)
             {
-                JsonProperty property = base.CreateProperty(member, memberSerialization);
-
-                // Strip the TargetSite property from all exceptions
-                if (typeof(Exception).IsAssignableFrom(property.DeclaringType) &&
-                    property.PropertyName == nameof(Exception.TargetSite))
+                using (var stringReader = new StringReader(input))
+                using (var jsonTextReader = new JsonTextReader(stringReader) { DateParseHandling = DateParseHandling.None })
                 {
-                    property.ShouldSerialize = _ => false;
+                    return token = JToken.Load(jsonTextReader);
                 }
-
-                return property;
             }
+
+            return token;
+        }
+
+        public static JArray ConvertToJArray(string input)
+        {
+            JArray jArray = null;
+            if (input != null)
+            {
+                using (var stringReader = new StringReader(input))
+                using (var jsonTextReader = new JsonTextReader(stringReader) { DateParseHandling = DateParseHandling.None })
+                {
+                    jArray = JArray.Load(jsonTextReader);
+                }
+            }
+
+            return jArray;
         }
     }
 }

@@ -14,7 +14,13 @@ namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
         Failed,
         ExternalEventRaised,
         ExternalEventDropped,
+        LockAcquired,
+        LockReleased,
         TimerExpired,
         Rewound,
+        EntityStateCreated,
+        EntityStateDeleted,
+        Suspended,
+        EntityBatch,
     }
 }

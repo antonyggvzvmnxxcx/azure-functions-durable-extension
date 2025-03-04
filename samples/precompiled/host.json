@@ -1,8 +1,12 @@
 {
   "version": "2.0",
   "logging": {
+    "logLevel": {
+      "DurableTask.AzureStorage": "Warning",
+      "DurableTask.Core": "Warning"
+    },
     "applicationInsights": {
-      "sampling": {
+      "samplingSettings": {
         "isEnabled": false
       }
     }
@@ -12,7 +16,7 @@
       "routePrefix": ""
     },
     "durableTask": {
-      "hubName": "SampleHubVS"
+      "hubName": "%MyTaskHubName%"
     }
   }
 }

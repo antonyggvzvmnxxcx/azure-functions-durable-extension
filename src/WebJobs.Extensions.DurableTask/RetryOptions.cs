@@ -4,7 +4,7 @@
 using System;
 using DurableTaskCore = DurableTask.Core;
 
-namespace Microsoft.Azure.WebJobs
+namespace Microsoft.Azure.WebJobs.Extensions.DurableTask
 {
     /// <summary>
     /// Defines retry policies that can be passed as parameters to various operations.
@@ -12,6 +12,10 @@ namespace Microsoft.Azure.WebJobs
     public class RetryOptions
     {
         private readonly DurableTaskCore.RetryOptions retryOptions;
+
+        // Would like to make this durability provider specific, but since this is a customer
+        // facing type, that is difficult.
+        private static readonly TimeSpan DefaultMaxRetryinterval = TimeSpan.FromDays(6);
 
         /// <summary>
         /// Creates a new instance RetryOptions with the supplied first retry and max attempts.
@@ -24,6 +28,7 @@ namespace Microsoft.Azure.WebJobs
         public RetryOptions(TimeSpan firstRetryInterval, int maxNumberOfAttempts)
         {
             this.retryOptions = new DurableTaskCore.RetryOptions(firstRetryInterval, maxNumberOfAttempts);
+            this.MaxRetryInterval = DefaultMaxRetryinterval;
         }
 
         /// <summary>
@@ -90,7 +95,7 @@ namespace Microsoft.Azure.WebJobs
         /// Gets or sets a delegate to call on exception to determine if retries should proceed.
         /// </summary>
         /// <value>
-        /// The delegate to handle exception to determie if retries should proceed.
+        /// The delegate to handle exception to determine if retries should proceed.
         /// </value>
         public Func<Exception, bool> Handle
         {
